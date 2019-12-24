@@ -47,7 +47,7 @@ end
 function dist(x1,y1,x2,y2)
 	-- anti overflow
 	local d = max(abs(x1-x2), abs(y1-y2))
-	local n = max(abs(x1-x2), abs(y1-y2)) / d
+	local n = min(abs(x1-x2), abs(y1-y2)) / d
 	return sqrt(n*n + 1)*d
 end
 
@@ -891,32 +891,33 @@ effect_manager = p.define({
 char_cheese = p.define({
 })
 
--- nezumi ------------------------
+-- char ------------------------
 
-char_nezu = p.define({
+char_base = p.define({
 	const = function(self, px, py, v, dir, effect)
 		self.effect = effect
 		self.v = v
 		-- dir (up, down, left, right)
 		self.dir = dir
 
-		char_nezu._super.const(self,px,py,0,0,0,0)
+		char_base._super.const(self,px,py,0,0,0,0)
 		self.color = 7
 		self.cnt = 0
 		self.anim = 0
+		self.anim_base = 0
 		self.anim_itvl = 8
 		self.size = 1
 
-		-- state (idling, playing, damaged, dead)
+		-- state (idling, moving, damaged, dead)
 		self.state = "idling"
-		self.pre = nil
+		self.prev = nil
 		self.next = nil
 	end,
 	dest = function(self)
 	end,
 
 	update = function(self,delta)
-		char_nezu._super.update(self,delta)
+		char_base._super.update(self,delta)
 
 		-- anim
 		self.cnt += 1
@@ -926,14 +927,15 @@ char_nezu = p.define({
 		-- dir
 		self.vel.x = 0
 		self.vel.y = 0
-		if self.dir == 'up'    then self.vel.y = -self.v end
-		if self.dir == 'down'  then self.vel.y =  self.v end
-		if self.dir == 'left'  then self.vel.x = -self.v end
-		if self.dir == 'right' then self.vel.x =  self.v end
-
+		if self.state == 'moving' then
+			if self.dir == 'up'    then self.vel.y = -self.v end
+			if self.dir == 'down'  then self.vel.y =  self.v end
+			if self.dir == 'left'  then self.vel.x = -self.v end
+			if self.dir == 'right' then self.vel.x =  self.v end
+		end
 	end,
 	draw = function(self)
-		local n = 0 + self.anim
+		local n = self.anim_base + self.anim
 		if self.dir == 'up'    then n += 0 end
 		if self.dir == 'down'  then n += 2 end
 		if self.dir == 'left'  then n += 4 end
@@ -948,7 +950,7 @@ char_nezu = p.define({
 	end,
 
 	start = function(self)
-		self.state = "playing"
+		self.state = "moving"
 	end,
 	damage = function(self, d)
 	end,
@@ -970,17 +972,80 @@ char_nezu = p.define({
 		-- return is_collide(posx,self.pos.y,self.size,obj.pos.x,obj.pos.y,obj.size)
 	end,
 	is_alive = function(self)
-		return self.state == "idling" or self.state == "playing"
+		return self.state == "idling" or self.state == "moving"
 	end
 })
 
-char_konezu = p.define({
-})
+char_nezu = p.define({
+	const = function(self, px, py, v, dir, effect)
+		char_nezu._super.const(self, px, py, v, dir, effect)
 
--- neko ------------------------
+		self.anim_base = 0
+		self.delay = 8 / v
+		-- { lr = 'left', elasped = 0.0, dir = 'up', px = 0, py = 0 }
+		self.cmds = {}
+	end,
+	pre_update = function(self, delta)
+		-- call next turn
+		for i = #self.cmds, 1, -1 do
+			local cmd = self.cmds[i]
+			cmd.elasped += delta
+			if cmd.elasped >= self.delay then
+				if self.next != nil then
+					if self.next.state != 'idling' then
+						self.next.pos.x = cmd.px
+						self.next.pos.y = cmd.py
+					end
+					self.next.dir = cmd.dir
+					self.next:turn(cmd.lr)
+				end
+				del(self.cmds, cmd)
+			end
+		end
+	end,
+	update = function(self,delta)
+		char_nezu._super.update(self,delta)
+	end,
+	draw = function(self)
+		char_nezu._super.draw(self)
+		if g_dbg then printm(""..#self.cmds,self.pos.x,self.pos.y,11) end
+		-- if g_dbg then printm(""..self.delay,self.pos.x,self.pos.y,11) end
+	end,
+	turn = function(self, lr)
+		add(self.cmds, { lr = lr, elasped = 0.0, dir = self.dir, px = self.pos.x, py = self.pos.y })
+		char_nezu._super.turn(self, lr)
+	end,
+	follow = function(self, target)
+		self.prev = target
+		target.next = self
+	end
+}, char_base)
+
+char_konezu = p.define({
+	const = function(self, px, py, v, dir, wait, effect)
+		char_konezu._super.const(self, px, py, v, dir, effect)
+		self.anim_base = 8
+		self.wait = wait
+	end,
+	pre_update = function(self, delta)
+		char_konezu._super.pre_update(self, delta)
+		if self.wait <= 0 then self:start() end
+	end,
+	update = function(self,delta)
+		char_konezu._super.update(self,delta)
+		if self.wait > 0 then self.wait = max(self.wait - delta, 0) end
+	end,
+	draw = function(self)
+		char_konezu._super.draw(self)
+	end,
+}, char_nezu)
 
 char_neko = p.define({
-})
+	const = function(self, px, py, v, dir, effect)
+		char_neko._super.const(self, px, py, v, dir, effect)
+		self.anim_base = 16
+	end,
+}, char_base)
 
 -- letter box ------------------------
 
@@ -995,47 +1060,6 @@ end
 
 view_city = p.define({
 })
-
-
-
-nezumi = p.define({
-	const = function(self,px,py,vx,vy)
-		nezumi._super.const(self,px,py,vx,vy,0,15)
-		self.color = 7
-	end,
-	dest = function(self)
-	end,
-
-	update = function(self,delta)
-		nezumi._super.update(self,delta)
-
-		if self.pos.x < 0 then
-			self.pos.x = 0
-			self.vel.x = abs(self.vel.x)
-		end
-		if self.pos.x > 127 then
-			self.pos.x = 127
-			self.vel.x = -abs(self.vel.x)
-		end
-		if self.pos.y > 127 then
-			self.pos.y = 127
-			self.vel.x =  0.8*self.vel.x
-			self.vel.y = -0.8*abs(self.vel.y)
-		end
-	end,
-	draw = function(self)
-		circ(self.pos.x,self.pos.y,3,self.color)
-	end
-})
-
-big_nezumi = p.define({
-	const = function(self,px,py,vx,vy)
-		big_nezumi._super.const(self,px,py,vx,vy)
-	end,
-	draw = function(self)
-		circ(self.pos.x,self.pos.y,5,self.color)
-	end
-}, nezumi)
 
 ------------------------------------------------------------------------------------------------
 -- title
@@ -1077,7 +1101,8 @@ function scn_title:pre_update(delta)
 			-- self.nezu:dash()
 		end
 		-- go to
-		if self.elasped > 1.6 then
+		-- if self.elasped > 1.6 then
+		if self.elasped > 0 then
 			p.move(self.next)
 		end
 		-- button disable
@@ -1143,13 +1168,12 @@ end
 scn_ingame = p.add("ingame")
 
 function scn_ingame:init()
-	self.nezumis = {}
-	self:add_nezumi()
-
 	s_score = 0
 	-- self.city = p.create(view_city,32*5,-0.11,0)
 	self.effect = p.create(effect_manager)
-	self.nezu = p.create(char_nezu, 40, 40, 10, 'up', self.effect)
+	self.nezu = p.create(char_nezu, 40, 40, 10, 'right', self.effect)
+	self.nezu:start()
+	self.konezu_list = {}
 
 	-- self.neko = p.create(char_neko, 4, s_grd, self.effect)
 	-- self.score = p.create(score_manager, self.nezu, self.effect)
@@ -1173,28 +1197,26 @@ function scn_ingame:init()
 end
 
 function scn_ingame:fin()
-	foreach(self.nezumis,
-		function(nezumi) p.destroy(nezumi) end
-	)
-	self.nezumis = {}
 
 	-- s_score = self.score:get_score()
 	-- p.destroy(self.score)
 	p.destroy(self.effect)
 	p.destroy(self.nezu)
+	foreach(self.konezu_list,
+		function(konezu) p.destroy(konezu) end
+	)
+	self.konezu_list = {}
 	-- p.destroy(self.neko)
 	-- p.destroy(self.city)
 end
 
 function scn_ingame:pre_update(delta)
-	-- if btnp(🅾️) then
-	-- 	p.move("result")
-	-- end
-	-- if btnp(❎) then
-	-- 	self:add_nezumi()
-	-- end
-
 	s_dbg_log[1] = self.nezu.dir
+	s_dbg_log[2] = self.cnt
+
+	if self.cnt % 30 == 0 then
+		self:add_konezu()
+	end
 
 	if btnp(🅾️) then
 		self.nezu:turn('left')
@@ -1202,10 +1224,14 @@ function scn_ingame:pre_update(delta)
 	if btnp(❎) then
 		self.nezu:turn('right')
 	end
+
+	self.nezu:pre_update(delta)
+	foreach(self.konezu_list,
+		function(konezu) konezu:pre_update(delta) end
+	)
 end
 
 function scn_ingame:post_update(delta)
-	self:del_nezumi()
 end
 
 function scn_ingame:pre_draw()
@@ -1228,26 +1254,25 @@ function scn_ingame:post_draw()
 	end
 end
 
-function scn_ingame:add_nezumi()
-	local cls = nezumi
-	if rnd(100)>80 then cls = big_nezumi end
-	local obj = p.create(
-		cls,
-		rndr(0,128),128,
-		rndr(-30,30),rndr(-80,-20)
-	)
-	obj.color = rndir(1,15)
-	obj:set_priority(rndir(0,10))
-	add(self.nezumis, obj)
+function scn_ingame:add_konezu()
+	local target = self.nezu
+	local wait = target.delay
+	if #self.konezu_list > 0 then
+		target = self.konezu_list[#self.konezu_list]
+		wait = target.delay + target.wait
+	end
+	local konezu = p.create(char_konezu, target.pos.x, target.pos.y, target.v, target.dir, wait, self.effect)
+	konezu:follow(target)
+	add(self.konezu_list, konezu)
 end
 
-function scn_ingame:del_nezumi()
-	if #self.nezumis > 10 then
-		p.destroy(self.nezumis[1])
-		del(self.nezumis, self.nezumis[1])
-		self:del_nezumi()
-	end
-end
+-- function scn_ingame:del_nezumi()
+-- 	if #self.nezumis > 10 then
+-- 		p.destroy(self.nezumis[1])
+-- 		del(self.nezumis, self.nezumis[1])
+-- 		self:del_nezumi()
+-- 	end
+-- end
 
 ------------------------------------------------------------------------------------------------
 -- result

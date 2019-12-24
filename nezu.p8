@@ -7,6 +7,7 @@ __lua__
 
 g_dbg = true
 g_win = {x = 128, y = 128}
+g_fps = 30
 
 -- util ------------------------
 
@@ -982,22 +983,21 @@ char_nezu = p.define({
 
 		self.anim_base = 0
 		self.delay = 8 / v
-		-- { lr = 'left', elasped = 0.0, dir = 'up', px = 0, py = 0 }
+		-- { lr = 'left', elasped = 0, dir = 'up', px = 0, py = 0 }
 		self.cmds = {}
 	end,
 	pre_update = function(self, delta)
 		-- call next turn
 		for i = #self.cmds, 1, -1 do
 			local cmd = self.cmds[i]
-			cmd.elasped += delta
 			if cmd.elasped >= self.delay then
 				if self.next != nil then
 					if self.next.state != 'idling' then
 						self.next.pos.x = cmd.px
 						self.next.pos.y = cmd.py
+						self.next.dir = cmd.dir
+						self.next:turn(cmd.lr)
 					end
-					self.next.dir = cmd.dir
-					self.next:turn(cmd.lr)
 				end
 				del(self.cmds, cmd)
 			end
@@ -1005,10 +1005,13 @@ char_nezu = p.define({
 	end,
 	update = function(self,delta)
 		char_nezu._super.update(self,delta)
+		foreach(self.cmds,
+			function(cmd) cmd.elasped += delta end
+		)
 	end,
 	draw = function(self)
 		char_nezu._super.draw(self)
-		if g_dbg then printm(""..#self.cmds,self.pos.x,self.pos.y,11) end
+		-- if g_dbg then printm(""..#self.cmds,self.pos.x,self.pos.y,11) end
 		-- if g_dbg then printm(""..self.delay,self.pos.x,self.pos.y,11) end
 	end,
 	turn = function(self, lr)
@@ -1025,7 +1028,7 @@ char_konezu = p.define({
 	const = function(self, px, py, v, dir, wait, effect)
 		char_konezu._super.const(self, px, py, v, dir, effect)
 		self.anim_base = 8
-		self.wait = wait
+		self.wait = wait - (1/g_fps)
 	end,
 	pre_update = function(self, delta)
 		char_konezu._super.pre_update(self, delta)
@@ -1214,6 +1217,11 @@ function scn_ingame:pre_update(delta)
 	s_dbg_log[1] = self.nezu.dir
 	s_dbg_log[2] = self.cnt
 
+	self.nezu:pre_update(delta)
+	foreach(self.konezu_list,
+		function(konezu) konezu:pre_update(delta) end
+	)
+
 	if self.cnt % 30 == 0 then
 		self:add_konezu()
 	end
@@ -1224,11 +1232,6 @@ function scn_ingame:pre_update(delta)
 	if btnp(❎) then
 		self.nezu:turn('right')
 	end
-
-	self.nezu:pre_update(delta)
-	foreach(self.konezu_list,
-		function(konezu) konezu:pre_update(delta) end
-	)
 end
 
 function scn_ingame:post_update(delta)
@@ -1261,6 +1264,7 @@ function scn_ingame:add_konezu()
 		target = self.konezu_list[#self.konezu_list]
 		wait = target.delay + target.wait
 	end
+	local dir = target.dir
 	local konezu = p.create(char_konezu, target.pos.x, target.pos.y, target.v, target.dir, wait, self.effect)
 	konezu:follow(target)
 	add(self.konezu_list, konezu)
@@ -1420,7 +1424,7 @@ end
 -- update ----------------------
 
 function _update()
-	local delta = 1/30
+	local delta = 1/g_fps
 	p.update(delta)
 	s_api:update(delta)
 end

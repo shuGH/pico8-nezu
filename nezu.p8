@@ -929,12 +929,21 @@ char_base = p.define({
 		self.state = "idling"
 		self.prev = nil
 		self.next = nil
+
+		-- turn interval
+		self.turn_itvl = 0
+		self.turn_remaining = 0
 	end,
 	dest = function(self)
 	end,
 
 	update = function(self,delta)
 		char_base._super.update(self,delta)
+
+		-- turn interval
+		if self.turn_remaining > 0 then
+			self.turn_remaining -= delta
+		end
 
 		-- anim
 		self.cnt += 1
@@ -980,6 +989,7 @@ char_base = p.define({
 			elseif self.dir == 'left'  then self.dir = 'up'
 			elseif self.dir == 'right' then self.dir = 'down' end
 		end
+		self.turn_remaining = self.turn_itvl
 	end,
 
 	is_alive = function(self)
@@ -995,6 +1005,9 @@ char_nezu = p.define({
 		self.delay = 8 / v
 		-- { lr = 'left', elasped = 0, dir = 'up', px = 0, py = 0 }
 		self.cmds = {}
+		self.turn_itvl = self.delay
+		self.last_cmd = nil
+		self.mem_cmd = nil
 	end,
 	pre_update = function(self, delta)
 		-- call next turn
@@ -1015,9 +1028,17 @@ char_nezu = p.define({
 	end,
 	update = function(self,delta)
 		char_nezu._super.update(self,delta)
+		-- cmd
 		foreach(self.cmds,
 			function(cmd) cmd.elasped += delta end
 		)
+		-- turn interval
+		if self.mem_cmd != nil then
+			if self.turn_remaining <= 0 then
+				self:turn(self.mem_cmd)
+				self.mem_cmd = nil
+			end
+		end
 	end,
 	draw = function(self)
 		char_nezu._super.draw(self)
@@ -1025,8 +1046,21 @@ char_nezu = p.define({
 		-- if g_dbg then printm(""..self.delay,self.pos.x,self.pos.y,11) end
 	end,
 	turn = function(self, lr)
+		-- turn interval
+		if self.turn_itvl > 0 and self.turn_remaining > 0 then
+			if self.turn_remaining >= self.turn_itvl * 0.8 then
+				return
+			end
+			-- ll or rr only
+			if self.next != nil and self.last_cmd == lr then
+				self.mem_cmd = lr
+				return
+			end
+		end
+
 		add(self.cmds, { lr = lr, elasped = 0.0, dir = self.dir, px = self.pos.x, py = self.pos.y })
 		char_nezu._super.turn(self, lr)
+		self.last_cmd = lr
 	end,
 	follow = function(self, target)
 		self.prev = target
@@ -1038,6 +1072,7 @@ char_konezu = p.define({
 	const = function(self, px, py, v, dir, wait, effect)
 		char_konezu._super.const(self, px, py, v, dir, effect)
 		self.anim_base = 8
+		self.turn_itvl = 0
 		self.wait = wait - (1/g_fps)
 	end,
 	pre_update = function(self, delta)

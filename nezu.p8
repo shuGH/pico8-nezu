@@ -890,6 +890,22 @@ effect_manager = p.define({
 -- cheese ------------------------
 
 char_cheese = p.define({
+	const = function(self, px, py, effect)
+		char_cheese._super.const(self,px,py,0,0,0,0)
+		self.effect = effect
+		self.size = 3
+	end,
+	dest = function(self)
+	end,
+
+	update = function(self,delta)
+		char_cheese._super.update(self,delta)
+	end,
+	draw = function(self)
+		spr(32,self.pos.x-4,self.pos.y-4,1,1)
+
+		if g_dbg then circ(self.pos.x,self.pos.y,self.size,12) end
+	end,
 })
 
 -- char ------------------------
@@ -907,7 +923,7 @@ char_base = p.define({
 		self.anim = 0
 		self.anim_base = 0
 		self.anim_itvl = 8
-		self.size = 1
+		self.size = 3
 
 		-- state (idling, moving, damaged, dead)
 		self.state = "idling"
@@ -942,12 +958,9 @@ char_base = p.define({
 		if self.dir == 'left'  then n += 4 end
 		if self.dir == 'right' then n += 6 end
 		-- local f = self.stun_remaining > 0.0 or self.state == "dead"
-		spr(n,self.pos.x-4,self.pos.y-4,1,1,
-			f and n%2 == 0,
-			f
-		)
+		spr(n,self.pos.x-4,self.pos.y-4,1,1)
 
-		if g_dbg then pset(self.pos.x,self.pos.y,11) end
+		if g_dbg then circ(self.pos.x,self.pos.y,self.size,11) end
 	end,
 
 	start = function(self)
@@ -969,9 +982,6 @@ char_base = p.define({
 		end
 	end,
 
-	is_collide = function(self,obj)
-		-- return is_collide(posx,self.pos.y,self.size,obj.pos.x,obj.pos.y,obj.size)
-	end,
 	is_alive = function(self)
 		return self.state == "idling" or self.state == "moving"
 	end
@@ -1062,6 +1072,55 @@ end
 -- background ------------------------
 
 view_city = p.define({
+	const = function(self, px, py, w, h)
+		view_city._super.const(self,px,py)
+
+		self.w = w
+		self.h = h
+		self.unit = { x = 8, y = 8 }
+		self.scrl_vel = 1.2
+
+		-- obj: { px, py, s }
+		self.objs = {}
+		self:create_objs(0)
+	end,
+	dest = function(self)
+	end,
+	update = function(self,delta)
+	end,
+	draw = function(self)
+		foreach(self.objs,
+			function(obj)
+				spr(obj.s, obj.px, obj.py)
+			end
+		)
+
+		if g_dbg then
+			for i=0, self.w do
+				local x = self.pos.x + (self.unit.x * i)
+				line(x, self.pos.y, x, self.pos.y+(self.unit.y*self.h), 3)
+			end
+			for i=0, self.h do
+				local y = self.pos.y + (self.unit.y * i)
+				line(self.pos.x, y, self.pos.x+(self.unit.x*self.w), y, 3)
+			end
+		end
+	end,
+
+	scroll = function(self, delta)
+	end,
+	create_objs = function(self, offset)
+	end,
+	destroy_objs = function(self, offset)
+	end,
+	get_cheese_pos = function(self)
+		local xi = rndir(1,self.w)
+		local yi = rndir(1,self.h)
+		return {
+			x = self.pos.x + (xi-0.5)*self.unit.x,
+			y = self.pos.y + (yi-0.5)*self.unit.y
+		}
+	end
 })
 
 ------------------------------------------------------------------------------------------------
@@ -1172,13 +1231,14 @@ scn_ingame = p.add("ingame")
 
 function scn_ingame:init()
 	s_score = 0
-	-- self.city = p.create(view_city,32*5,-0.11,0)
+	self.city = p.create(view_city, 32, 16, 8, 12)
 	self.effect = p.create(effect_manager)
+
 	self.nezu = p.create(char_nezu, 40, 40, 10, 'right', self.effect)
 	self.nezu:start()
 	self.konezu_list = {}
-
 	-- self.neko = p.create(char_neko, 4, s_grd, self.effect)
+	self.cheese_list = {}
 	-- self.score = p.create(score_manager, self.nezu, self.effect)
 
 	self.started = false
@@ -1210,20 +1270,37 @@ function scn_ingame:fin()
 	)
 	self.konezu_list = {}
 	-- p.destroy(self.neko)
-	-- p.destroy(self.city)
+	foreach(self.cheese_list,
+		function(cheese) p.destroy(cheese) end
+	)
+	self.cheese_list = {}
+
+	p.destroy(self.city)
 end
 
 function scn_ingame:pre_update(delta)
 	s_dbg_log[1] = self.nezu.dir
 	s_dbg_log[2] = self.cnt
 
+	-- pre
 	self.nezu:pre_update(delta)
 	foreach(self.konezu_list,
 		function(konezu) konezu:pre_update(delta) end
 	)
 
+	-- check cheese
+	foreach(self.cheese_list,
+		function(c)
+			if self.nezu:is_collide(c) then
+				self:add_konezu()
+				self:remove_cheese(c)
+			end
+		end
+	)
+
+	-- test
 	if self.cnt % 30 == 0 then
-		self:add_konezu()
+		self:add_cheese()
 	end
 
 	if btnp(🅾️) then
@@ -1262,7 +1339,9 @@ function scn_ingame:add_konezu()
 	local wait = target.delay
 	if #self.konezu_list > 0 then
 		target = self.konezu_list[#self.konezu_list]
-		wait = target.delay + target.wait
+		wait = target.delay
+		-- tekito delay
+		if target.wait > 0 then wait += target.wait + ((1/g_fps) * 1.6) end
 	end
 	local dir = target.dir
 	local konezu = p.create(char_konezu, target.pos.x, target.pos.y, target.v, target.dir, wait, self.effect)
@@ -1277,6 +1356,51 @@ end
 -- 		self:del_nezumi()
 -- 	end
 -- end
+
+function scn_ingame:add_cheese()
+	local pos = nil
+	for i=1, 20 do
+		local p = self.city:get_cheese_pos()
+		if self:check_cheese(p) then
+			pos = p
+			break
+		end
+	end
+	if pos != nil then
+		local cheese = p.create(char_cheese, pos.x, pos.y, self.effect)
+		add(self.cheese_list, cheese)
+	end
+end
+
+function scn_ingame:remove_cheese(cheese)
+	del(self.cheese_list, cheese)
+	p.destroy(cheese)
+end
+
+function scn_ingame:check_cheese(pos)
+	local obj = {
+		pos = pos,
+		size = 4
+	}
+	if self.nezu:is_collide(obj) then
+		return false
+	end
+
+	local f = true
+	foreach(self.konezu_list,
+		function(kn)
+			if kn:is_collide(obj) then f = false end
+		end
+	)
+	if f == false then return false end
+	foreach(self.cheese_list,
+		function(c)
+			if c:is_collide(obj) then f = false end
+		end
+	)
+	if f == false then return false end
+	return true
+end
 
 ------------------------------------------------------------------------------------------------
 -- result
@@ -1481,14 +1605,14 @@ __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00000000000000000000000000000000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00000000055500000000000000099000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00888880055500007777777700099000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00888880055500000707070000009000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb08888888050000000707070000099000
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb08888888050000007777777700999990
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00550550050000000000000000999990
+555555556666666622222222dddddddd8888888899999999ccccccccdddddddd33333333bbbbbbbb33333333bbbbbbbb00000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

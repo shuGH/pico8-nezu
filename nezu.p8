@@ -892,6 +892,7 @@ effect_manager = p.define({
 char_cheese = p.define({
 	const = function(self, px, py, effect)
 		char_cheese._super.const(self,px,py,0,0,0,0)
+		self:set_priority(1,1)
 		self.effect = effect
 		self.size = 3
 	end,
@@ -1000,6 +1001,7 @@ char_base = p.define({
 char_nezu = p.define({
 	const = function(self, px, py, v, dir, effect)
 		char_nezu._super.const(self, px, py, v, dir, effect)
+		self:set_priority(3,3)
 
 		self.anim_base = 0
 		self.delay = 8 / v
@@ -1071,6 +1073,8 @@ char_nezu = p.define({
 char_konezu = p.define({
 	const = function(self, px, py, v, dir, wait, effect)
 		char_konezu._super.const(self, px, py, v, dir, effect)
+		self:set_priority(2,2)
+
 		self.anim_base = 8
 		self.turn_itvl = 0
 		self.wait = wait - (1/g_fps)
@@ -1089,10 +1093,43 @@ char_konezu = p.define({
 }, char_nezu)
 
 char_neko = p.define({
-	const = function(self, px, py, v, dir, effect)
+	const = function(self, px, py, v, dir, nezu, city, neffect)
 		char_neko._super.const(self, px, py, v, dir, effect)
+		self:set_priority(4,4)
+
 		self.anim_base = 16
+		self.nezu = nezu
+		self.city = city
+		self.turn_itvl = (8 / v)
 	end,
+	update = function(self,delta)
+		-- chase (right higher priority)
+		if self.turn_remaining - delta <= 0 then
+			local p = self.city:get_fixed_pos(self.pos.x, self.pos.y)
+			self.pos.x = p.x
+			self.pos.y = p.y
+			self.turn_remaining = 0
+
+			local dx = self.nezu.pos.x - self.pos.x
+			local dy = self.nezu.pos.y - self.pos.y
+			if abs(dx) > abs(dy) then
+				if     self.dir == 'up'    then self:turn(dx > 0 and 'right' or 'left')
+				elseif self.dir == 'down'  then self:turn(dx > 0 and 'left' or 'right')
+				elseif self.dir == 'left'  then self:turn(dx > 0 and 'right' or 'none')
+				elseif self.dir == 'right' then self:turn(dx > 0 and 'none' or 'right') end
+			else
+				if     self.dir == 'up'    then self:turn(dy > 0 and 'right' or 'none')
+				elseif self.dir == 'down'  then self:turn(dy > 0 and 'none' or 'right')
+				elseif self.dir == 'left'  then self:turn(dy > 0 and 'left' or 'right')
+				elseif self.dir == 'right' then self:turn(dy > 0 and 'right' or 'left') end
+			end
+		end
+
+		char_neko._super.update(self,delta)
+	end,
+	draw = function(self)
+		char_neko._super.draw(self)
+	end
 }, char_base)
 
 -- letter box ------------------------
@@ -1148,12 +1185,28 @@ view_city = p.define({
 	end,
 	destroy_objs = function(self, offset)
 	end,
-	get_cheese_pos = function(self)
-		local xi = rndir(1,self.w)
-		local yi = rndir(1,self.h)
+	get_grid_pos = function(self, xi_min, xi_max, yi_min, yi_max)
+		local xi_min = xi_min or 1
+		local xi_max = xi_max or self.w
+		local yi_min = yi_min or 1
+		local yi_max = yi_max or self.h
+
+		local xi = rndir(xi_min,xi_max)
+		local yi = rndir(yi_min,yi_max)
 		return {
 			x = self.pos.x + (xi-0.5)*self.unit.x,
 			y = self.pos.y + (yi-0.5)*self.unit.y
+		}
+	end,
+	get_fixed_pos = function(self, px, py)
+		local px = px - self.pos.x
+		local py = py - self.pos.y
+		local xi = ceil(px / self.unit.x)
+		local yi = ceil(py / self.unit.y)
+		-- adjust dot shift
+		return {
+			x = self.pos.x + (xi-0.5)*self.unit.x + 0.5,
+			y = self.pos.y + (yi-0.5)*self.unit.y + 0.5
 		}
 	end
 })
@@ -1270,9 +1323,8 @@ function scn_ingame:init()
 	self.effect = p.create(effect_manager)
 
 	self.nezu = p.create(char_nezu, 40, 40, 10, 'right', self.effect)
-	self.nezu:start()
 	self.konezu_list = {}
-	-- self.neko = p.create(char_neko, 4, s_grd, self.effect)
+	self.neko = p.create(char_neko, 80, 80, 4, 'left', self.nezu, self.city, self.effect)
 	self.cheese_list = {}
 	-- self.score = p.create(score_manager, self.nezu, self.effect)
 
@@ -1292,6 +1344,16 @@ function scn_ingame:init()
 	-- self.neko.pos.x = 44
 	self.elasped = 0.0
 	self.effect:fade_in(0.8)
+
+	self:start()
+end
+
+function scn_ingame:start()
+	local p = self.city:get_grid_pos()
+	self.neko.pos.x = p.x
+	self.neko.pos.y = p.y
+	self.nezu:start()
+	self.neko:start()
 end
 
 function scn_ingame:fin()
@@ -1304,7 +1366,7 @@ function scn_ingame:fin()
 		function(konezu) p.destroy(konezu) end
 	)
 	self.konezu_list = {}
-	-- p.destroy(self.neko)
+	p.destroy(self.neko)
 	foreach(self.cheese_list,
 		function(cheese) p.destroy(cheese) end
 	)
@@ -1396,7 +1458,7 @@ end
 function scn_ingame:add_cheese()
 	local pos = nil
 	for i=1, 20 do
-		local p = self.city:get_cheese_pos()
+		local p = self.city:get_grid_pos()
 		if self:check_cheese(p) then
 			pos = p
 			break

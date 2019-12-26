@@ -1329,12 +1329,13 @@ function scn_ingame:pre_update(delta)
 			if self.nezu:is_collide(c) then
 				self:add_konezu()
 				self:remove_cheese(c)
+				self:add_cheese()
 			end
 		end
 	)
 
 	-- test
-	if self.cnt % 30 == 0 then
+	if self.cnt == 30 then
 		self:add_cheese()
 	end
 
